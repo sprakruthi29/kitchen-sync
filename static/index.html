@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>KitchenSync — Order Routing & KDS</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans">
+
+  <header class="bg-slate-900 border-b border-slate-800 px-6 py-4 flex justify-between items-center sticky top-0 z-10">
+    <div class="flex items-center gap-3">
+      <div class="w-3 h-3 rounded-full bg-emerald-400 animate-pulse"></div>
+      <h1 class="text-xl font-bold tracking-tight text-white">Kitchen<span class="text-cyan-400">Sync</span></h1>
+      <span class="text-xs bg-slate-800 text-slate-400 px-2 py-0.5 rounded">Live WebSocket Sync</span>
+    </div>
+    <nav class="flex gap-2">
+      <button onclick="switchTab('waiter')" id="tab-waiter" class="px-4 py-2 rounded-lg text-sm font-medium bg-cyan-600 text-white">Waiter Floor Plan & Billing</button>
+      <button onclick="switchTab('kds')" id="tab-kds" class="px-4 py-2 rounded-lg text-sm font-medium bg-slate-800 text-slate-300 hover:bg-slate-700">Kitchen Display (KDS)</button>
+      <button onclick="switchTab('admin')" id="tab-admin" class="px-4 py-2 rounded-lg text-sm font-medium bg-slate-800 text-slate-300 hover:bg-slate-700">Menu & 86'd Toggle</button>
+    </nav>
+  </header>
+
+  <main class="p-6 max-w-7xl mx-auto">
+
+    <!-- VIEW 1: WAITER FLOOR PLAN -->
+    <section id="view-waiter" class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div class="lg:col-span-2 space-y-6">
+        <div id="pickup-banner" class="hidden bg-blue-950/80 border border-blue-500 rounded-xl p-4 flex justify-between items-center">
+          <div>
+            <span class="text-xs font-bold uppercase tracking-wider text-blue-400">Expo Pickup Alert</span>
+            <p id="pickup-text" class="text-sm font-medium text-white mt-0.5"></p>
+          </div>
+        </div>
+
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
+          <div class="flex justify-between items-center mb-4">
+            <h2 class="text-lg font-semibold">Live Restaurant Floor Map</h2>
+            <div class="flex gap-3 text-xs">
+              <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span> Available</span>
+              <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-amber-500"></span> Occupied</span>
+              <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-blue-500 animate-ping"></span> Food Ready</span>
+            </div>
+          </div>
+          <div id="floor-grid" class="grid grid-cols-2 sm:grid-cols-3 gap-4"></div>
+        </div>
+      </div>
+
+      <!-- Table Drawer -->
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-5">
+        <div class="border-b border-slate-800 pb-3 flex justify-between items-center">
+          <h2 id="selected-table-title" class="text-lg font-semibold text-cyan-400">Select a Table</h2>
+          <span id="selected-table-badge" class="text-xs px-2 py-1 rounded bg-slate-800 text-slate-400">No table selected</span>
+        </div>
+
+        <div id="table-controls" class="hidden space-y-5">
+          <div class="space-y-3">
+            <h3 class="text-sm font-semibold text-slate-300">Add Items to Order</h3>
+            <select id="order-menu-select" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm"></select>
+            <div class="flex gap-2">
+              <input id="order-qty" type="number" min="1" value="1" class="w-20 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm" />
+              <input id="order-notes" type="text" placeholder="Notes (e.g., No onions)" class="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm" />
+            </div>
+            <button onclick="submitOrderItem()" class="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-medium py-2 rounded-lg text-sm transition">Send to Kitchen</button>
+          </div>
+
+          <div class="border-t border-slate-800 pt-4">
+            <h3 class="text-sm font-semibold text-slate-300 mb-2">Current Table Items</h3>
+            <div id="active-table-items" class="space-y-2 text-sm text-slate-400">None yet.</div>
+          </div>
+
+          <div class="border-t border-slate-800 pt-4 space-y-3">
+            <div class="flex justify-between items-center">
+              <h3 class="text-sm font-semibold text-slate-300">Bill & Split Calculator</h3>
+              <div class="flex items-center gap-2 text-xs">
+                <label>Split by:</label>
+                <input id="split-count" type="number" min="1" value="2" onchange="loadBill()" class="w-14 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-center" />
+              </div>
+            </div>
+            <div id="bill-box" class="bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs space-y-1.5 font-mono">
+              <p class="text-slate-500">No active bill.</p>
+            </div>
+            <button onclick="settleTable()" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-medium py-2 rounded-lg text-sm transition">Settle Bill & Free Table</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- VIEW 2: KITCHEN DISPLAY SYSTEM (KDS) -->
+    <section id="view-kds" class="hidden space-y-6">
+      <div class="flex justify-between items-center">
+        <div>
+          <h2 class="text-xl font-bold">Kitchen Display System (FIFO Queue)</h2>
+          <p class="text-xs text-slate-400">Orders exceeding Prep Time + 10 mins are automatically flagged in red.</p>
+        </div>
+        <div id="station-load" class="flex gap-3 text-xs"></div>
+      </div>
+      <div id="kds-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5"></div>
+    </section>
+
+    <!-- VIEW 3: MENU & 86'D TOGGLE -->
+    <section id="view-admin" class="hidden grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
+        <h2 class="text-lg font-semibold mb-1">Inventory & 86'd (Out of Stock) Control</h2>
+        <p class="text-xs text-slate-400 mb-4">Toggle items out of stock to instantly hide them from waiter ordering.</p>
+        <div id="admin-menu-list" class="space-y-3"></div>
+      </div>
+
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
+        <h2 class="text-lg font-semibold mb-1">Today's Best-Selling Items</h2>
+        <p class="text-xs text-slate-400 mb-4">Ranked by total units ordered</p>
+        <div id="bestsellers-list" class="space-y-3"></div>
+      </div>
+    </section>
+
+  </main>
+
+  <script>
+    let appState = { menu: [], tables: [], orders: [], best_sellers: [] };
+    let selectedTableId = null;
+
+    // Audio chime notification when new orders arrive
+    function playAudioChime() {
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(587.33, ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.3);
+        gain.gain.setValueAtTime(0.15, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.4);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.4);
+      } catch(e) {}
+    }
+
+    const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${wsProtocol}//${location.host}/ws`);
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      if (data.event === 'NEW_ORDER') {
+        playAudioChime();
+      }
+      fetchState();
+    };
+
+    function switchTab(tab) {
+      ['waiter', 'kds', 'admin'].forEach(t => {
+        document.getElementById(`view-${t}`).classList.toggle('hidden', t !== tab);
+        document.getElementById(`tab-${t}`).className = t === tab
+          ? 'px-4 py-2 rounded-lg text-sm font-medium bg-cyan-600 text-white'
+          : 'px-4 py-2 rounded-lg text-sm font-medium bg-slate-800 text-slate-300 hover:bg-slate-700';
+      });
+    }
+
+    async function fetchState() {
+      const res = await fetch('/api/state');
+      appState = await res.json();
+      renderAll();
+    }
+
+    function renderAll() {
+      renderFloorPlan();
+      renderKDS();
+      renderAdmin();
+      if (selectedTableId) selectTable(selectedTableId);
+    }
+
+    function renderFloorPlan() {
+      const grid = document.getElementById('floor-grid');
+      const readyTables = appState.tables.filter(t => t.status === 'READY_PICKUP');
+      const banner = document.getElementById('pickup-banner');
+      if (readyTables.length > 0) {
+        banner.classList.remove('hidden');
+        document.getElementById('pickup-text').innerText = `Tables ready for food runner pickup: ${readyTables.map(t => t.table_number).join(', ')}`;
+      } else {
+        banner.classList.add('hidden');
+      }
+
+      grid.innerHTML = appState.tables.map(t => {
+        const colors = {
+          'AVAILABLE': 'border-emerald-500/40 bg-emerald-950/20 hover:border-emerald-400',
+          'OCCUPIED': 'border-amber-500/50 bg-amber-950/20 hover:border-amber-400',
+          'READY_PICKUP': 'border-blue-500 bg-blue-950/40 ring-2 ring-blue-500/50'
+        };
+        const ring = selectedTableId === t.id ? 'ring-2 ring-cyan-400' : '';
+        return `
+          <div onclick="selectTable(${t.id})" class="cursor-pointer border rounded-xl p-4 transition ${colors[t.status] || ''} ${ring}">
+            <div class="flex justify-between items-center">
+              <span class="text-lg font-bold">${t.table_number}</span>
+              <span class="text-xs text-slate-400">${t.capacity} Seats</span>
+            </div>
+            <div class="mt-3 text-xs font-semibold uppercase tracking-wider">${t.status.replace('_', ' ')}</div>
+          </div>
+        `;
+      }).join('');
+
+      // Filter out 86'd items from waiter dropdown
+      const availableMenu = appState.menu.filter(m => m.is_available === 1);
+      document.getElementById('order-menu-select').innerHTML = availableMenu.map(m =>
+        `<option value="${m.id}">${m.name} — ₹${(m.price_paise/100).toFixed(0)} (${m.prep_time_mins}m)</option>`
+      ).join('');
+    }
+
+    async function selectTable(tableId) {
+      selectedTableId = tableId;
+      const table = appState.tables.find(t => t.id === tableId);
+      document.getElementById('selected-table-title').innerText = `Table ${table.table_number}`;
+      document.getElementById('selected-table-badge').innerText = table.status;
+      document.getElementById('table-controls').classList.remove('hidden');
+
+      const activeOrder = appState.orders.find(o => o.table_id === tableId);
+      const itemsContainer = document.getElementById('active-table-items');
+      if (!activeOrder) {
+        itemsContainer.innerHTML = '<p class="text-slate-500 text-xs">No active items ordered yet.</p>';
+        document.getElementById('bill-box').innerHTML = '<p class="text-slate-500">No active bill.</p>';
+      } else {
+        itemsContainer.innerHTML = activeOrder.items.map(i => `
+          <div class="flex justify-between items-center bg-slate-950 px-3 py-2 rounded border border-slate-800">
+            <div>
+              <span class="text-slate-200 font-medium">${i.quantity}x ${i.name}</span>
+              ${i.notes ? `<span class="block text-xs text-amber-400">Note: ${i.notes}</span>` : ''}
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="text-xs px-2 py-0.5 rounded bg-slate-800">${i.status}</span>
+              ${i.status === 'READY' ? `<button onclick="advanceStatus(${i.id}, 'SERVED')" class="text-xs bg-blue-600 px-2 py-0.5 rounded text-white">Serve</button>` : ''}
+            </div>
+          </div>
+        `).join('');
+        loadBill();
+      }
+      renderFloorPlan();
+    }
+
+    async function submitOrderItem() {
+      if (!selectedTableId) return;
+      const menu_item_id = parseInt(document.getElementById('order-menu-select').value);
+      const quantity = parseInt(document.getElementById('order-qty').value);
+      const notes = document.getElementById('order-notes').value;
+      await fetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ table_id: selectedTableId, items: [{ menu_item_id, quantity, notes }] })
+      });
+      document.getElementById('order-notes').value = '';
+      fetchState();
+    }
+
+    async function loadBill() {
+      if (!selectedTableId) return;
+      const splitBy = document.getElementById('split-count').value || 1;
+      const res = await fetch(`/api/tables/${selectedTableId}/bill?split_by=${splitBy}`);
+      if (!res.ok) return;
+      const bill = await res.json();
+      document.getElementById('bill-box').innerHTML = `
+        <div class="flex justify-between"><span>Subtotal:</span><span>₹${bill.subtotal.toFixed(2)}</span></div>
+        <div class="flex justify-between text-slate-400"><span>GST (5%):</span><span>₹${bill.gst.toFixed(2)}</span></div>
+        <div class="flex justify-between font-bold text-sm text-white border-t border-slate-800 pt-1"><span>Grand Total:</span><span>₹${bill.grand_total.toFixed(2)}</span></div>
+        <div class="flex justify-between text-cyan-400 pt-1"><span>Split (${bill.split_by} ways):</span><span>₹${bill.per_person.toFixed(2)} / person</span></div>
+      `;
+    }
+
+    async function settleTable() {
+      if (!selectedTableId) return;
+      await fetch(`/api/tables/${selectedTableId}/pay`, { method: 'POST' });
+      selectedTableId = null;
+      document.getElementById('table-controls').classList.add('hidden');
+      fetchState();
+    }
+
+    function renderKDS() {
+      const stationCounts = {};
+      appState.orders.forEach(o => o.items.forEach(i => {
+        if (i.status !== 'SERVED') stationCounts[i.station] = (stationCounts[i.station] || 0) + i.quantity;
+      }));
+      document.getElementById('station-load').innerHTML = Object.entries(stationCounts).map(([st, cnt]) =>
+        `<span class="bg-slate-900 border border-slate-700 px-3 py-1 rounded-full">${st}: <strong class="text-cyan-400">${cnt}</strong></span>`
+      ).join('');
+
+      const sortedOrders = [...appState.orders].sort((a, b) => (b.is_delayed - a.is_delayed) || (a.id - b.id));
+
+      document.getElementById('kds-grid').innerHTML = sortedOrders.map(o => `
+        <div class="rounded-xl border p-4 flex flex-col justify-between ${o.is_delayed ? 'bg-red-950/30 border-red-500' : 'bg-slate-900 border-slate-800'}">
+          <div>
+            <div class="flex justify-between items-center border-b border-slate-800 pb-2 mb-3">
+              <div>
+                <span class="text-lg font-bold">Table ${o.table_number}</span>
+                <span class="text-xs text-slate-400 ml-2">#ORD-${o.id}</span>
+              </div>
+              <div class="text-right">
+                <span class="text-xs font-mono px-2 py-0.5 rounded ${o.is_delayed ? 'bg-red-600 text-white font-bold animate-pulse' : 'bg-slate-800 text-slate-300'}">
+                  ${o.elapsed_mins}m elapsed ${o.is_delayed ? '• DELAYED' : `(SLA: ${o.max_prep_mins + 10}m)`}
+                </span>
+              </div>
+            </div>
+            <div class="space-y-2.5">
+              ${o.items.map(i => `
+                <div class="bg-slate-950/80 p-2.5 rounded-lg border border-slate-800 flex justify-between items-center">
+                  <div>
+                    <div class="text-sm font-medium">${i.quantity}x ${i.name} <span class="text-xs text-slate-500">(${i.station})</span></div>
+                    ${i.notes ? `<div class="text-xs text-amber-400">Note: ${i.notes}</div>` : ''}
+                    <div class="text-[11px] text-slate-400 mt-0.5">Status: <strong class="text-cyan-400">${i.status}</strong></div>
+                  </div>
+                  <div>
+                    ${i.status === 'QUEUED' ? `<button onclick="advanceStatus(${i.id}, 'PREPARING')" class="bg-amber-600 hover:bg-amber-500 text-xs px-2.5 py-1.5 rounded font-medium">Start</button>` : ''}
+                    ${i.status === 'PREPARING' ? `<button onclick="advanceStatus(${i.id}, 'READY')" class="bg-emerald-600 hover:bg-emerald-500 text-xs px-2.5 py-1.5 rounded font-medium">Mark Ready</button>` : ''}
+                    ${i.status === 'READY' ? `<span class="text-xs text-emerald-400 font-semibold">✓ Ready</span>` : ''}
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        </div>
+      `).join('') || '<p class="text-slate-500 text-sm">No active orders in the kitchen queue.</p>';
+    }
+
+    async function advanceStatus(itemId, status) {
+      await fetch(`/api/order-items/${itemId}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status })
+      });
+      fetchState();
+    }
+
+    function renderAdmin() {
+      // 86'd inventory list
+      document.getElementById('admin-menu-list').innerHTML = appState.menu.map(m => `
+        <div class="flex justify-between items-center bg-slate-950 p-3 rounded-lg border border-slate-800 text-sm">
+          <div>
+            <div class="font-medium">${m.name} <span class="text-xs text-slate-500">(${m.station})</span></div>
+            <div class="text-xs ${m.is_available ? 'text-emerald-400' : 'text-red-400 font-bold'}">
+              ${m.is_available ? '● Available' : '✖ 86\'d (Out of Stock)'}
+            </div>
+          </div>
+          <button onclick="toggleStock(${m.id})" class="px-3 py-1.5 rounded text-xs font-medium ${m.is_available ? 'bg-red-600 hover:bg-red-500 text-white' : 'bg-emerald-600 hover:bg-emerald-500 text-white'}">
+            ${m.is_available ? '86 Item' : 'Restock'}
+          </button>
+        </div>
+      `).join('');
+
+      // Best sellers
+      document.getElementById('bestsellers-list').innerHTML = appState.best_sellers.map((b, idx) => `
+        <div class="flex justify-between items-center bg-slate-950 p-3 rounded-lg border border-slate-800 text-sm">
+          <div class="flex items-center gap-3">
+            <span class="w-6 h-6 rounded-full bg-cyan-950 text-cyan-400 flex items-center justify-center text-xs font-bold">#${idx + 1}</span>
+            <span class="font-medium">${b.name}</span>
+          </div>
+          <div class="text-right">
+            <div class="font-bold text-emerald-400">${b.total_sold} sold</div>
+            <div class="text-xs text-slate-400">₹${(b.revenue_paise/100).toFixed(0)} rev</div>
+          </div>
+        </div>
+      `).join('') || '<p class="text-slate-500 text-xs">No sales recorded yet.</p>';
+    }
+
+    async function toggleStock(id) {
+      await fetch(`/api/menu/${id}/toggle-stock`, { method: 'PATCH' });
+      fetchState();
+    }
+
+    fetchState();
+    setInterval(fetchState, 15000);
+  </script>
+</body>
+</html>
